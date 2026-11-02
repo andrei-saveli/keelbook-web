@@ -1,41 +1,66 @@
 # Keelbook web
 
-A browser interface for the Keelbook vulnerability register: products and releases, review
-and decisions, Art. 14 cases with deadlines, evidence and exports, monitoring of shipped
-releases. It uses the [keelbook](https://github.com/andrei-saveli/keelbook) package as its
-engine; nothing about parsing or vulnerability lookup is duplicated here.
+The Keelbook vulnerability register in a web browser: products, release scans, decisions per
+finding, review sheet (Excel), evidence record, OpenVEX, backup. Made for the vulnerability
+handling duties of the EU Cyber Resilience Act.
 
-**Status: skeleton.** A start page and tests only.
+## How it works
 
-## Principles
+The site is static (GitHub Pages). The [keelbook](https://github.com/andrei-saveli/keelbook)
+engine runs **inside the browser** with [Pyodide](https://pyodide.org) (Python compiled to
+WebAssembly), in a background worker:
 
-- The SBOM stays where this app runs. Only package names and versions go to vulnerability
-  databases (OSV, NVD, CVE List).
-- Nothing is sent to ENISA; a person submits and records it.
-- A person decides what is actively exploited and records every decision with a reason.
-- Unchecked is never shown as clean.
-- Working aid, not legal advice.
+- The SBOM never leaves the user's computer. Only package names and versions go to OSV and NVD,
+  straight from the browser (both allow it). Nothing is sent to ENISA.
+- The register is the same SQLite file the command-line tool uses, kept in the browser's
+  storage (IndexedDB). "Backup and restore" downloads it as `keelbook.db`; the CLI can open it.
+- CISA does not allow browsers to download its KEV list, so the publishing job copies it next
+  to the page once a day (`data/kev.json`).
+- Not in the web version yet: Art. 14 cases, the official CVE List index (too large for a
+  browser), ENISA EUVD, VEX / Yocto cve-check files. Use the command-line tool for those.
 
-## Development
+First visit: about 15 MB is downloaded (Python and the engine), then cached by the browser.
+
+## Files
+
+```
+site/index.html            the page (plain HTML, one font)
+site/app.js                pages and forms
+site/worker.js             starts Pyodide, installs the engine, keeps the register in IndexedDB
+site/py/browser_net.py     network, waiting and "threads" for the engine inside a browser
+site/py/bridge.py          the only interface between the pages and the engine (JSON in, JSON out)
+site/vendor/*.whl          the keelbook engine (built from a keelbook release)
+tests/test_bridge.py       the bridge in normal Python, no network
+tests/browser_check.js     end-to-end check in a real browser (needs internet)
+.github/workflows/pages.yml  tests, copies the KEV list, publishes on GitHub Pages
+```
+
+## Develop and test
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
+pip install site/vendor/keelbook-*.whl pytest
 pytest -q
-keelbook-web          # opens http://127.0.0.1:8765/ (this computer only)
+python3 -m http.server -d site 8000      # then open http://localhost:8000/
 ```
 
-While the keelbook repository is private, installing it needs GitHub access
-(`git config --global credential.helper` or a token). To develop against a local copy:
-`pip install -e ../keelbook` before `pip install -e ".[dev]"`.
+For the KEV list locally: `curl -o site/data/kev.json https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json`.
 
-## Layout
+End-to-end in Chromium (with the server above running and Playwright installed):
 
+```bash
+node tests/browser_check.js http://localhost:8000/ path/to/sbom.cdx.json /tmp/out
 ```
-src/keelbook_web/app.py        FastAPI application, `keelbook-web` command
-src/keelbook_web/templates/    HTML pages (server-rendered)
-tests/                         pytest, no network
-```
+
+## New engine version
+
+Build the wheel in the keelbook repo (`pip wheel --no-deps -w dist .`), copy it to
+`site/vendor/`, delete the old one, and update `ENGINE_WHEEL` in `site/worker.js`.
+
+## Publishing
+
+GitHub repository Settings, Pages, Source: **GitHub Actions**. Every push to `main` then
+tests and publishes the site at `https://andrei-saveli.github.io/keelbook-web/`.
 
 ## Licence
 

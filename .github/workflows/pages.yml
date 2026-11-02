@@ -1,0 +1,52 @@
+name: pages
+
+# Publishes site/ on GitHub Pages. Runs on every push to main and once a day, so the copy of
+# CISA's KEV list next to the page stays current (browsers cannot download it from cisa.gov).
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the engine the site uses, and pytest
+        run: python -m pip install site/vendor/keelbook-*.whl pytest
+      - run: python -m pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Copy the CISA KEV list next to the page
+        run: |
+          mkdir -p site/data
+          curl -fsSL --retry 3 -o site/data/kev.json \
+            https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+          python3 -c "import json; d = json.load(open('site/data/kev.json')); assert d['vulnerabilities']; print(d['catalogVersion'], len(d['vulnerabilities']))"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keelbook</title>
+<style>
+body { font-family: Arial, Helvetica, sans-serif; font-size: 14px; margin: 16px; max-width: 1200px; }
+input, select, textarea, button { font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
+table { border-collapse: collapse; margin: 8px 0; }
+th, td { border: 1px solid #999; padding: 3px 6px; text-align: left; vertical-align: top; }
+td.n { text-align: right; }
+form, fieldset { margin: 8px 0; }
+fieldset { border: 1px solid #999; }
+label { display: inline-block; margin: 2px 12px 2px 0; }
+#msg:empty { display: none; }
+#msg { border: 1px solid #000; padding: 6px; white-space: pre-wrap; }
+#msg.error { border-color: #b00; color: #b00; }
+.wide { overflow-x: auto; }
+</style>
+</head>
+<body>
+<p><b><a href="#">Keelbook</a></b> | vulnerability register (EU Cyber Resilience Act) |
+<label>Your name <input id="actor" size="20" autocomplete="name"></label>
+| <a href="#data">Backup and restore</a> | <span id="engine">Starting...</span></p>
+<p id="msg"></p>
+<div id="view"></div>
+<hr>
+<p>Everything runs in this browser. The SBOM and the register stay on this computer; only package
+names and versions are sent to OSV and NVD. Nothing is sent to ENISA. Working aid, not legal advice.</p>
+<script src="app.js"></script>
+</body>
+</html>
