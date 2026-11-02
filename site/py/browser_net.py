@@ -7,6 +7,7 @@ client keeps a reference to time.sleep from import time.
 """
 
 import concurrent.futures
+import hashlib
 import io
 import time
 import urllib.error
@@ -45,10 +46,30 @@ def _headers(raw: str) -> Message:
     return message
 
 
+# Answers downloaded in parallel by the page before a scan, and answers given during the scan's
+# planning step (the scan asks the same questions again). Emptied after each scan.
+_cache: dict[str, bytes] = {}
+
+
+def store(url: str, data) -> None:
+    _cache[url] = data.to_bytes() if hasattr(data, "to_bytes") else bytes(data)
+
+
+def clear_cache() -> None:
+    _cache.clear()
+
+
+def _key(method: str, url: str, body) -> str:
+    return url if method == "GET" else f"{method} {url} {hashlib.sha1(body or b'').hexdigest()}"
+
+
 def urlopen(request, data=None, timeout=None, **_ignored):
     if isinstance(request, str):
         request = urllib.request.Request(request, data=data)
     url, method, body = request.full_url, request.get_method(), request.data
+    key = _key(method, url, body)
+    if key in _cache:
+        return _Response(_cache[key], 200, url, Message())
     xhr = js.XMLHttpRequest.new()
     xhr.open(method, url, False)
     xhr.responseType = "arraybuffer"
@@ -65,6 +86,8 @@ def urlopen(request, data=None, timeout=None, **_ignored):
     headers = _headers(xhr.getAllResponseHeaders())
     if xhr.status >= 400:
         raise urllib.error.HTTPError(url, xhr.status, xhr.statusText, headers, io.BytesIO(raw))
+    if method == "POST":
+        _cache[key] = raw
     return _Response(raw, xhr.status, url, headers)
 
 

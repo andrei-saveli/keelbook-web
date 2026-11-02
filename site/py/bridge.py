@@ -18,6 +18,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,7 @@ from keelbook.errors import CaseError, KevFileError, SbomError, VulnLookupError
 from keelbook.htmlreport import evidence_html
 from keelbook.parsers import load_sbom
 from keelbook.register import (DECIDED, DETAIL_FIELDS, NEEDS_DECISION, RECONFIRM, DecisionInput, Register,
-                               RegisterError, finding_record)
+                               RegisterError, finding_record, validate_decision)
 from keelbook.registerreport import _decision_text, _display, _producer_text, exploited, openvex, openvex_json, \
     ordered, severity_text
 from keelbook.report import candidate_sources, sha256_of
@@ -40,6 +41,7 @@ from keelbook import cvelist as cvl
 from keelbook.cpe import unescape
 from keelbook.lookup import split_by_source
 from keelbook.scanpipe import LookupOptions, run_pipeline
+from keelbook.vulns import BATCH_SIZE, OSV_BASE, build_queries, default_http
 from keelbook.xlsxreport import read_review_workbook, review_workbook
 
 USER_ERRORS = (CaseError, RegisterError, SbomError, VulnLookupError, KevFileError, ValueError)
@@ -98,15 +100,56 @@ def _fetch(url: str) -> bytes:
         return response.read()
 
 
+def _cvelist_products(components) -> list[str]:
+    _, groups, _ = split_by_source(components, use_nvd=False, use_cvelist=True)
+    keys = {cvl.norm(unescape(g.cpe.product)) for g in groups}
+    return sorted({cvl.PRODUCT_ALIASES.get(k, k) for k in keys if k})
+
+
+def plan_scan(filename: str, data: bytes, use_cvelist: bool = False, data_url: str | None = None) -> dict[str, Any]:
+    """What a scan of this SBOM will download, so the page can fetch it all in parallel first.
+
+    Python in a browser has no threads, so the engine would fetch one vulnerability's details
+    after another. Here OSV is asked once which vulnerabilities apply (the scan reuses that
+    answer), and the list of detail and CVE List files to download is returned.
+    """
+    if not data:
+        raise ValueError("Choose the SBOM file of this release.")
+    folder = Path(tempfile.mkdtemp())
+    try:
+        sbom_file = folder / (Path(filename or "sbom.json").name or "sbom.json")
+        sbom_file.write_bytes(data)
+        sbom = load_sbom(sbom_file)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    osv_components, _, _ = split_by_source(sbom.components, use_nvd=False, use_cvelist=use_cvelist)
+    queries = []
+    for component in osv_components:
+        found, reason = build_queries(component)
+        if reason is None:
+            queries.extend(found)
+    ids: set[str] = set()
+    for start in range(0, len(queries), BATCH_SIZE):
+        progress(f"Asking OSV about {len(queries)} package(s)...")
+        answer = default_http("POST", f"{OSV_BASE}/v1/querybatch", {"queries": queries[start:start + BATCH_SIZE]})
+        for result in answer.get("results") or []:
+            ids.update(v["id"] for v in (result or {}).get("vulns") or [] if isinstance(v, dict) and v.get("id"))
+    urls = [f"{OSV_BASE}/v1/vulns/{urllib.parse.quote(i, safe='')}" for i in sorted(ids)]
+    if use_cvelist and data_url:
+        products = _cvelist_products(sbom.components)
+        if products:
+            urls.append(data_url + "cvelist/meta.json")
+            urls += [f"{data_url}cvelist/{name}.json" for name in sorted({cve_file(p) for p in products})]
+    return {"components": len(sbom.components), "urls": urls}
+
+
 def prepare_cvelist(components, data_url: str) -> int:
     """Build a small CVE List index with only the products in this SBOM, from the site's split copy.
 
     The engine then uses it exactly like the full index the command-line tool builds. Returns the
     number of products looked up.
     """
-    _, groups, _ = split_by_source(components, use_nvd=False, use_cvelist=True)
-    keys = {cvl.norm(unescape(g.cpe.product)) for g in groups}
-    products = sorted({cvl.PRODUCT_ALIASES.get(k, k) for k in keys if k})
+    products = _cvelist_products(components)
     try:
         meta = json.loads(_fetch(data_url + "cvelist/meta.json"))
     except Exception as exc:
@@ -220,29 +263,34 @@ def review(pid: str, label: str) -> dict[str, Any]:
     try:
         state = reg.product(pid)
         rel = reg.release(state, label)
-        rows = ordered(reg.review(state, rel))
-        items = []
-        for r in rows:
-            f, d = r.finding, r.decision
-            sev = f.get("severity") or {}
-            items.append({
-                "key": f["key"], "cve_ids": f.get("cve_ids") or [],
-                "other_ids": [i for i in [f["vuln_id"], *(f.get("aliases") or [])] if i not in (f.get("cve_ids") or [])],
-                "component": _display(f), "version": f.get("version") or "", "severity": severity_text(f),
-                "severity_label": sev.get("label") or "unknown",
-                "fixed_in": " ".join(f.get("fixed_in") or []) or f.get("fix_note") or "unknown",
-                "kev": f.get("kev"), "euvd": f.get("euvd"), "state": r.state, "note": r.note or "",
-                "decision": _decision_text(d) if d else "", "reason": d.reason if d else "",
-                "by": d.by if d else "", "at": d.at if d else "", "producer": _producer_text(f) or "",
-                "summary": " ".join((f.get("summary") or "").split()),
-            })
-        return {"product": {"id": state.id, "name": state.name}, "release": {
-                    "label": rel.label, "sbom_file": rel.sbom_file, "sbom_sha256": rel.sbom_sha256,
-                    "scanned_at": rel.scanned_at, "scanned_by": rel.scanned_by, "total": rel.total,
-                    "checked": rel.checked, "skipped": rel.skipped, "sources": rel.sources},
-                "counts": _counts(rows), "suggestions": len(reg.producer_suggestions(state, rel)), "rows": items}
+        return _review_payload(reg, state, rel, reg.review(state, rel))
     finally:
         store.close()
+
+
+def _review_payload(reg: Register, state, rel, review_rows) -> dict[str, Any]:
+    """The release page: findings in priority order, with decisions and producer statements."""
+    rows = ordered(review_rows)
+    items = []
+    for r in rows:
+        f, d = r.finding, r.decision
+        sev = f.get("severity") or {}
+        items.append({
+            "key": f["key"], "cve_ids": f.get("cve_ids") or [],
+            "other_ids": [i for i in [f["vuln_id"], *(f.get("aliases") or [])] if i not in (f.get("cve_ids") or [])],
+            "component": _display(f), "version": f.get("version") or "", "severity": severity_text(f),
+            "severity_label": sev.get("label") or "unknown",
+            "fixed_in": " ".join(f.get("fixed_in") or []) or f.get("fix_note") or "unknown",
+            "kev": f.get("kev"), "euvd": f.get("euvd"), "state": r.state, "note": r.note or "",
+            "decision": _decision_text(d) if d else "", "reason": d.reason if d else "",
+            "by": d.by if d else "", "at": d.at if d else "", "producer": _producer_text(f) or "",
+            "summary": " ".join((f.get("summary") or "").split()),
+        })
+    return {"product": {"id": state.id, "name": state.name}, "release": {
+                "label": rel.label, "sbom_file": rel.sbom_file, "sbom_sha256": rel.sbom_sha256,
+                "scanned_at": rel.scanned_at, "scanned_by": rel.scanned_by, "total": rel.total,
+                "checked": rel.checked, "skipped": rel.skipped, "sources": rel.sources},
+            "counts": _counts(rows), "suggestions": len(reg.producer_suggestions(state, rel)), "rows": items}
 
 
 def verify() -> dict[str, Any]:
@@ -332,10 +380,11 @@ def scan(pid: str, label: str, filename: str, data: bytes, use_nvd: bool, nvd_ke
             rel = reg.release(state, label)
             rows = reg.review(state, rel)
             suggestions = len(reg.producer_suggestions(state, rel))
+            page = _review_payload(reg, state, rel, rows)  # the page shows it next: no second round trip
         finally:
             store.close()
         return {"label": rel.label, "findings": len(rows), "counts": _counts(rows), "total": len(sbom.components),
-                "seconds": round(time.monotonic() - started),
+                "seconds": round(time.monotonic() - started), "review": page,
                 "checked": lookup.checked, "skipped": lookup.skipped, "sources": result.sources(),
                 "exploited": sum(1 for r in rows if exploited(r.finding)), "suggestions": suggestions,
                 "warnings": list(sbom.warnings) + [line for line in err.getvalue().splitlines() if line.strip()]}
@@ -343,15 +392,35 @@ def scan(pid: str, label: str, filename: str, data: bytes, use_nvd: bool, nvd_ke
         shutil.rmtree(folder, ignore_errors=True)
 
 
+# The engine's rule messages, in the words of the page.
+_PLAIN = (("status must be", "Choose a decision."),
+          ("a reason is required", "Write a reason: why this decision. It is recorded word for word."),
+          ("not_affected needs", "Not affected needs a justification (choose one from the list) or an impact "
+                                 "statement."),
+          ("justification must be", "Choose the justification from the list."),
+          ("a justification is only used", "A justification is only used with Not affected."),
+          ("affected needs an action", "Affected needs an action: what is being done about it, e.g. "
+                                       "'Upgrade to 2.17.1 in release 1.1'."),
+          ("fixed needs", "Fixed needs the release that contains the fix."))
+
+
+def _plain(problem: str) -> str:
+    return next((text for start, text in _PLAIN if problem.startswith(start)), problem)
+
+
 def decide(pid: str, label: str, keys: list[str], decision: dict[str, Any], actor: str) -> dict[str, Any]:
     """One decision for one or more findings: all are recorded, or none (same rules as the CLI)."""
     actor = _need_name(actor)
     if not keys:
-        raise ValueError("Tick at least one finding.")
+        raise ValueError("Tick at least one finding, or choose 'Apply to all ... that match the filter'.")
     d = {k: (" ".join(str(decision.get(k) or "").split()) or None)
          for k in ("status", "reason", "justification", "impact", "action", "fixed_in")}
     items = [DecisionInput(key, d["status"] or "", d["reason"] or "", d["justification"], d["impact"], d["action"],
                            d["fixed_in"]) for key in keys]
+    # The same decision is applied to every ticked finding, so the problems are the same for all.
+    problems = [_plain(p) for p in validate_decision(items[0])]
+    if problems:
+        raise ValueError("Nothing was recorded.\n" + "\n".join(problems))
     store, reg = _open()
     try:
         reg.decide(pid, label, items, actor)
@@ -474,7 +543,7 @@ def import_db(data: bytes) -> dict[str, Any]:
 
 # --- the single entry point ---------------------------------------------------------
 
-FUNCTIONS = {f.__name__: f for f in (status, products, product, review, verify, add_product, set_details, scan,
+FUNCTIONS = {f.__name__: f for f in (status, products, product, review, verify, add_product, set_details, plan_scan, scan,
                                      decide, accept_producer, evidence, vex, sheet, import_sheet, export_db, import_db)}
 
 

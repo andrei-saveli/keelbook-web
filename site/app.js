@@ -98,6 +98,8 @@ function route() {
 let flash = null;
 async function render() {
   if (!ready) {
+    const cached = (() => { try { return JSON.parse(store("kb-products") || "null"); } catch (e) { return null; } })();
+    if (cached && cached.length && route().page === "products") { productsTable(cached, true); return; }
     view.innerHTML = `<h1>Loading Keelbook</h1><p class="muted">The first visit downloads about 15 MB and takes up to a minute. Later visits start in a few seconds.</p>
       <p>${esc(engineText.textContent)}</p>`;
     return;
@@ -118,6 +120,12 @@ function go(hash) { if (location.hash.slice(1) === hash) render(); else location
 async function productsPage() {
   const list = await run(null, "Loading products...", "products");
   if (!list) return;
+  store("kb-products", JSON.stringify(list));
+  productsTable(list, false);
+}
+
+// waiting: shown from the copy saved at the last visit while the engine starts (links work once it is ready).
+function productsTable(list, waiting) {
   const rows = list.map((p) => `<tr>
       <td><a href="#product/${encodeURIComponent(p.id)}"><b>${esc(p.name)}</b></a><div class="muted small">${esc(p.id)}</div></td>
       <td>${p.latest ? `<a href="#release/${encodeURIComponent(p.id)}/${encodeURIComponent(p.latest)}">${esc(p.latest)}</a>` : '<span class="muted">none yet</span>'}</td>
@@ -138,7 +146,8 @@ async function productsPage() {
         <label class="field"><span>Name</span><input name="name" type="text" placeholder="Gateway X200"></label>
         ${detailFields({})}
       </div>
-      <button class="btn primary" type="submit">Add product</button></form>`;
+      <button class="btn primary" type="submit"${waiting ? " disabled" : ""}>${waiting ? "Starting..." : "Add product"}</button></form>`;
+  if (waiting) return;
   $("add").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
@@ -205,6 +214,7 @@ async function productPage(pid) {
       { pid, label: f.label.value, filename: file.name, use_cvelist: f.cvelist.checked, use_nvd: f.nvd.checked,
         nvd_key: f.key.value.trim() || null, use_kev: f.kev.checked, kev_file: null, actor: actor() }, file.bytes, true);
     if (!result) return;
+    justScanned = result.review;
     const skipped = Object.entries(result.skipped).map(([why, n]) => `${n} ${why}`).join("; ");
     flash = [`Release ${result.label} recorded in ${result.seconds} s: ${result.findings} finding(s). Checked ${result.checked} of ${result.total} component(s)` +
       (skipped ? `.\nNOT checked: ${skipped}. These are not counted as clean.` : ".") +
@@ -218,8 +228,12 @@ async function productPage(pid) {
 // ---------- one release ----------
 let filterState = "todo", filterText = "", filterComp = "", limit = 200, lastRelease = "";
 const SEV_ORDER = ["critical", "high", "medium", "low", "none", "unknown"];
+let justScanned = null; // the scan already returns the release page's data
 async function releasePage(pid, label) {
-  const data = await run(null, "Loading findings...", "review", { pid, label });
+  let data = null;
+  if (justScanned && justScanned.product.id === pid && justScanned.release.label === label) data = justScanned;
+  justScanned = null;
+  if (!data) data = await run(null, "Loading findings...", "review", { pid, label });
   if (data) drawRelease(pid, label, data);
 }
 
