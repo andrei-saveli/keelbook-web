@@ -1,5 +1,5 @@
 // End-to-end check of the site in a real browser (needs internet: Pyodide CDN, OSV).
-// Usage: python3 -m http.server -d site 8000 &  then  node tests/browser_check.js http://localhost:8000/ SBOM_FILE OUT_DIR
+// Usage: python3 -m http.server -d site 8000 &  then  node tests/browser_check.js http://localhost:8000/ SBOM_FILE OUT_DIR CPE_SBOM_FILE
 const { chromium } = require("playwright");
 const [url, sbom, out] = process.argv.slice(2);
 let pageRef = null; const logs = [];
@@ -14,7 +14,7 @@ let pageRef = null; const logs = [];
   const msg = () => page.textContent("#msg");
   await step("engine starts", async () => {
     await page.goto(url);
-    await page.waitForFunction(() => document.getElementById("engine").textContent.startsWith("Engine:"), null, { timeout: 180000 });
+    await page.waitForFunction(() => document.getElementById("engine").textContent.startsWith("Ready"), null, { timeout: 180000 });
   });
   await step("add product", async () => {
     await page.fill("#actor", "Ana Pop"); await page.dispatchEvent("#actor", "change");
@@ -26,19 +26,19 @@ let pageRef = null; const logs = [];
     await page.fill('#scan [name=label]', "1.0"); await page.setInputFiles('#scan [name=sbom]', sbom);
     await page.uncheck('#scan [name=nvd]');
     await page.click("#scan button");
-    await page.waitForFunction(() => { const m = document.getElementById("msg"); return m.textContent.startsWith("Recorded release") || m.className === "error"; }, null, { timeout: 300000 });
-    if (!(await msg()).startsWith("Recorded release")) throw new Error("scan failed");
+    await page.waitForFunction(() => { const m = document.getElementById("msg"); return m.textContent.startsWith("Release ") || m.className.includes("error"); }, null, { timeout: 300000 });
+    if (!(await msg()).startsWith("Release ")) throw new Error("scan failed");
     console.log("   ", (await msg()).split("\n")[0]);
   });
   await step("exploited finding marked", async () => {
     const row = await page.textContent("tr:has-text('CVE-2021-44228')");
-    if (!row.includes("YES")) throw new Error("KEV not marked: " + row);
+    if (!row.includes("Yes")) throw new Error("KEV not marked: " + row);
   });
   await step("incomplete decision refused", async () => {
     await page.check("tr:has-text('CVE-2024-35195') input[name=pick]");
     await page.selectOption('#decide [name=status]', "not_affected");
     await page.fill('#decide [name=reason]', "Session verify=False is never used");
-    await page.click("#decide button"); await page.waitForFunction(() => document.getElementById("msg").className === "error");
+    await page.click("#decide button"); await page.waitForFunction(() => document.getElementById("msg").className.includes("error"));
     console.log("   ", (await msg()).replace(/\n/g, " | ").slice(0, 160));
   });
   await step("decision recorded", async () => {
@@ -58,19 +58,30 @@ let pageRef = null; const logs = [];
     await d.saveAs(out + "/gw.openvex.json");
   });
   await page.screenshot({ path: out + "/release.png", fullPage: true });
+  await step("Yocto-style SBOM (CPE only) through the CVE List copy, no NVD", async () => {
+    await page.click("text=Gateway"); await page.waitForSelector("#scan");
+    await page.fill('#scan [name=label]', "2.0"); await page.setInputFiles('#scan [name=sbom]', process.argv[5]);
+    await page.click("#scan button");
+    await page.waitForFunction(() => { const m = document.getElementById("msg"); return m.textContent.startsWith("Release ") || m.className.includes("error"); }, null, { timeout: 300000 });
+    console.log("   ", (await msg()).split("\n")[0]);
+    await page.selectOption("#fstate", "all");
+    const text = await page.textContent("table");
+    if (!text.includes("CVE-2025-9230")) throw new Error("CVE-2025-9230 (OpenSSL 3.4.2) not found via the CVE List");
+  });
+  await page.screenshot({ path: out + "/release2.png", fullPage: true });
   await step("register kept after reload", async () => {
     await page.reload();
-    await page.waitForFunction(() => document.getElementById("engine").textContent.startsWith("Engine:"), null, { timeout: 180000 });
+    await page.waitForFunction(() => document.getElementById("engine").textContent.startsWith("Ready"), null, { timeout: 180000 });
     await page.waitForSelector("text=Gateway");
     const text = await page.textContent("#view");
-    if (!text.includes("1.0")) throw new Error("release missing after reload");
+    if (!text.includes("2.0")) throw new Error("release missing after reload");
   });
   await page.screenshot({ path: out + "/products.png", fullPage: true });
   await step("backup and log check", async () => {
     await page.click("text=Backup and restore"); await page.waitForSelector("#backup");
     const [d] = await Promise.all([page.waitForEvent("download"), page.click("#backup")]);
     await d.saveAs(out + "/keelbook.db");
-    console.log("   ", (await page.textContent("table")).replace(/\s+/g, " ").slice(0, 120));
+    console.log("   ", (await page.textContent(".box")).replace(/\s+/g, " ").slice(0, 120));
   });
   console.log(problems.length ? "PROBLEMS:\n" + problems.join("\n") : "no browser errors");
   await browser.close();

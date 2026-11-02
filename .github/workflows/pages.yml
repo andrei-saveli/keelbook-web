@@ -1,7 +1,8 @@
 name: pages
 
-# Publishes site/ on GitHub Pages. Runs on every push to main and once a day, so the copy of
-# CISA's KEV list next to the page stays current (browsers cannot download it from cisa.gov).
+# Publishes site/ on GitHub Pages. Runs on every push to main and once a day, so the copies next
+# to the page stay current: the official CVE List (split per product, so a browser downloads only
+# what its SBOM needs) and CISA's KEV list (browsers cannot download it from cisa.gov).
 on:
   push:
     branches: [main]
@@ -38,6 +39,15 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Official CVE List, split into small files for the browser
+        run: |
+          python -m pip install site/vendor/keelbook-*.whl
+          keelbook update-db
+          python tools/export_cvelist.py site/data/cvelist
+          du -sh site/data/cvelist
       - name: Copy the CISA KEV list next to the page
         run: |
           mkdir -p site/data

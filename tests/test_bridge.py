@@ -120,3 +120,41 @@ def test_scan_errors_are_messages_not_crashes(db):
                   nvd_key=None, kev_file=None, actor="Ana")
     assert "error" in answer
     assert "No such product" in call("review", pid="nope", label="1.0")["error"]
+
+
+def test_scan_with_the_split_cve_list_needs_no_nvd(db):
+    """The site's daily copy of the official CVE List: split into files, fetched per product."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    from export_cvelist import export
+    from keelbook.cvelist import build_index, iter_dir
+
+    index = db / "full-index.sqlite"
+    build_index(iter_dir(Path(__file__).parent / "fixtures" / "cvelist"), index, source="test")
+    site = db / "site-data"
+    manifest = export(index, site / "cvelist")
+    assert manifest["files"] >= 1
+    seen = []
+    bridge.progress_hook = seen.append
+    try:
+        ok(call("add_product", pid="gw", name="Gateway", details={}, actor="Ana"))
+        sbom = json.dumps({"bomFormat": "CycloneDX", "specVersion": "1.5", "components": [
+            {"name": "libcrypto3", "version": "3.4.2", "cpe": "cpe:2.3:a:openssl:openssl:3.4.2:*:*:*:*:*:*:*"}]})
+        result = ok(call("scan", blob=sbom.encode(), pid="gw", label="1.0", filename="b.json", use_nvd=False,
+                         nvd_key=None, kev_file=None, actor="Ana", use_cvelist=True,
+                         data_url=site.as_uri() + "/"))
+    finally:
+        bridge.progress_hook = None
+    assert result["checked"] == 1 and result["findings"] == 1
+    assert any("CVE List" in s for s in result["sources"])
+    rows = ok(call("review", pid="gw", label="1.0"))["rows"]
+    assert rows[0]["cve_ids"] == ["CVE-2025-90001"] and rows[0]["fixed_in"] == "3.4.3"
+    assert any("Official CVE List: file 1 of 1" in t for t in seen) and any("SBOM read" in t for t in seen)
+
+
+def test_cpe_components_are_not_checked_without_a_source(db):
+    ok(call("add_product", pid="gw", name="Gateway", details={}, actor="Ana"))
+    sbom = json.dumps({"bomFormat": "CycloneDX", "specVersion": "1.5", "components": [
+        {"name": "busybox", "version": "1.36.1", "cpe": "cpe:2.3:a:busybox:busybox:1.36.1:*:*:*:*:*:*:*"}]})
+    result = ok(call("scan", blob=sbom.encode(), pid="gw", label="1.0", filename="b.json", use_nvd=False,
+                     nvd_key=None, kev_file=None, actor="Ana"))
+    assert result["checked"] == 0 and sum(result["skipped"].values()) == 1  # shown as NOT checked, never clean

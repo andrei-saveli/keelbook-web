@@ -10,11 +10,15 @@ This file runs in the browser (Pyodide) and in normal Python for the tests.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
+import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +35,10 @@ from keelbook.register import (DECIDED, DETAIL_FIELDS, NEEDS_DECISION, RECONFIRM
 from keelbook.registerreport import _decision_text, _display, _producer_text, exploited, openvex, openvex_json, \
     ordered, severity_text
 from keelbook.report import candidate_sources, sha256_of
+import keelbook.scanpipe as scanpipe
+from keelbook import cvelist as cvl
+from keelbook.cpe import unescape
+from keelbook.lookup import split_by_source
 from keelbook.scanpipe import LookupOptions, run_pipeline
 from keelbook.xlsxreport import read_review_workbook, review_workbook
 
@@ -38,8 +46,22 @@ USER_ERRORS = (CaseError, RegisterError, SbomError, VulnLookupError, KevFileErro
 STATES = (NEEDS_DECISION, RECONFIRM, DECIDED)
 
 
-class _NoSpinner:
-    """Stands in for rich's status spinner, which needs a thread (browsers have none)."""
+# The page sets this to receive progress text during long steps (a scan can take minutes).
+progress_hook = None
+
+
+def progress(text: str) -> None:
+    if progress_hook is not None:
+        progress_hook(str(text))
+
+
+class _Status:
+    """Stands in for rich's status spinner (it needs a thread; browsers have none) and passes the
+    engine's progress text on to the page instead."""
+
+    def __init__(self, text: str = ""):
+        if text:
+            progress(text)
 
     def __enter__(self):
         return self
@@ -47,13 +69,82 @@ class _NoSpinner:
     def __exit__(self, *exc):
         return False
 
-    def update(self, *args, **kwargs):
-        pass
+    def update(self, text: str = "", *args, **kwargs):
+        if text:
+            progress(text)
 
 
 class QuietConsole(Console):
-    def status(self, *args, **kwargs):  # type: ignore[override]
-        return _NoSpinner()
+    def status(self, status: str = "", *args, **kwargs):  # type: ignore[override]
+        return _Status(status)
+
+
+def _no_full_download(*args, **kwargs):
+    raise VulnLookupError("The copy of the CVE List on this site is more than 7 days old (it is normally refreshed "
+                          "every day).")
+
+
+# The web version never downloads the whole CVE List (hundreds of MB); it uses the split copy on the site.
+scanpipe.download_and_build = _no_full_download
+
+
+def cve_file(product: str) -> str:
+    """Which of the site's CVE List files holds a product (same rule as tools/export_cvelist.py)."""
+    return hashlib.sha1(product.encode("utf-8")).hexdigest()[:3]
+
+
+def _fetch(url: str) -> bytes:
+    with urllib.request.urlopen(url) as response:
+        return response.read()
+
+
+def prepare_cvelist(components, data_url: str) -> int:
+    """Build a small CVE List index with only the products in this SBOM, from the site's split copy.
+
+    The engine then uses it exactly like the full index the command-line tool builds. Returns the
+    number of products looked up.
+    """
+    _, groups, _ = split_by_source(components, use_nvd=False, use_cvelist=True)
+    keys = {cvl.norm(unescape(g.cpe.product)) for g in groups}
+    products = sorted({cvl.PRODUCT_ALIASES.get(k, k) for k in keys if k})
+    try:
+        meta = json.loads(_fetch(data_url + "cvelist/meta.json"))
+    except Exception as exc:
+        raise VulnLookupError(f"The CVE List copy on this site could not be read ({exc}).") from exc
+    path = cvl.default_index_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    if tmp.exists():
+        tmp.unlink()
+    db = sqlite3.connect(tmp)
+    try:
+        db.executescript("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);"
+                         "CREATE TABLE cves (id TEXT PRIMARY KEY, published TEXT, summary TEXT, score REAL, "
+                         "cvss_version TEXT);"
+                         "CREATE TABLE entries (product TEXT, cve TEXT, entry TEXT);")
+        files = sorted({cve_file(p) for p in products})
+        for number, name in enumerate(files, 1):
+            progress(f"Official CVE List: file {number} of {len(files)} for {len(products)} product(s)")
+            try:
+                data = json.loads(_fetch(f"{data_url}cvelist/{name}.json"))
+            except Exception as exc:
+                raise VulnLookupError(f"Part of the CVE List copy could not be downloaded ({exc}).") from exc
+            for product in products:
+                if cve_file(product) != name:
+                    continue
+                for cve, entry, summary, score, cvss_version in data.get(product, []):
+                    db.execute("INSERT OR IGNORE INTO cves VALUES (?, NULL, ?, ?, ?)", (cve, summary, score, cvss_version))
+                    db.execute("INSERT INTO entries VALUES (?, ?, ?)", (product, cve, entry))
+        db.execute("CREATE INDEX entries_product ON entries (product)")
+        db.executemany("INSERT INTO meta VALUES (?, ?)", [
+            ("schema", str(meta.get("schema") or cvl.INDEX_SCHEMA)), ("built", meta.get("built") or ""),
+            ("source", "CVE List copy on the Keelbook site"), ("records", str(meta.get("records") or "")),
+            ("kept", str(meta.get("kept") or ""))])
+        db.commit()
+    finally:
+        db.close()
+    os.replace(tmp, path)
+    return len(products)
 
 
 def db_path() -> Path:
@@ -194,7 +285,7 @@ def set_details(pid: str, details: dict[str, Any], actor: str) -> dict[str, Any]
 
 
 def scan(pid: str, label: str, filename: str, data: bytes, use_nvd: bool, nvd_key: str | None,
-         kev_file: str | None, actor: str) -> dict[str, Any]:
+         kev_file: str | None, actor: str, use_cvelist: bool = False, data_url: str | None = None) -> dict[str, Any]:
     """Like `keelbook product scan`: parse the SBOM, look up vulnerabilities, record the release."""
     actor = _need_name(actor)
     if not (label or "").strip():
@@ -210,10 +301,17 @@ def scan(pid: str, label: str, filename: str, data: bytes, use_nvd: bool, nvd_ke
     try:
         sbom_file = folder / (Path(filename or "sbom.json").name or "sbom.json")
         sbom_file.write_bytes(data)
+        started = time.monotonic()
+        progress("Reading the SBOM...")
         sbom = load_sbom(sbom_file)
+        progress(f"SBOM read: {len(sbom.components)} component(s).")
+        if use_cvelist:
+            if not data_url:
+                raise ValueError("The CVE List copy is not available here.")
+            prepare_cvelist(sbom.components, data_url)
         out, err = io.StringIO(), io.StringIO()
         console, err_console = QuietConsole(file=out, width=100), QuietConsole(file=err, width=100)
-        opts = LookupOptions(no_nvd=not use_nvd, nvd_api_key=nvd_key or None,
+        opts = LookupOptions(no_nvd=not use_nvd, nvd_api_key=nvd_key or None, use_cvelist=use_cvelist,
                              kev_path=Path(kev_file) if kev_file else None)
         try:
             result = run_pipeline(console, err_console, sbom, opts)
@@ -237,6 +335,7 @@ def scan(pid: str, label: str, filename: str, data: bytes, use_nvd: bool, nvd_ke
         finally:
             store.close()
         return {"label": rel.label, "findings": len(rows), "counts": _counts(rows), "total": len(sbom.components),
+                "seconds": round(time.monotonic() - started),
                 "checked": lookup.checked, "skipped": lookup.skipped, "sources": result.sources(),
                 "exploited": sum(1 for r in rows if exploited(r.finding)), "suggestions": suggestions,
                 "warnings": list(sbom.warnings) + [line for line in err.getvalue().splitlines() if line.strip()]}

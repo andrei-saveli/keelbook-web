@@ -15,11 +15,11 @@ function syncfs(populate) {
 }
 
 async function start() {
-  post({ type: "progress", text: "Loading Python (first visit: about 15 MB, then cached)..." });
+  post({ type: "progress", text: "Loading Python (step 1 of 3; first visit about 15 MB, then cached)..." });
   py = await loadPyodide({ indexURL: PYODIDE });
   py.setStdout({ batched: (line) => post({ type: "log", line }) });
   py.setStderr({ batched: (line) => post({ type: "log", line }) });
-  post({ type: "progress", text: "Loading the keelbook engine..." });
+  post({ type: "progress", text: "Loading libraries (step 2 of 3)..." });
   await py.loadPackage(["micropip", "click", "rich", "sqlite3"]);
   py.FS.mkdirTree("/data");
   py.FS.mount(py.FS.filesystems.IDBFS, {}, "/data");
@@ -28,6 +28,7 @@ async function start() {
     const text = await (await fetch(base + "py/" + name, { cache: "no-cache" })).text();
     py.FS.writeFile("/home/pyodide/" + name, text);
   }
+  post({ type: "progress", text: "Loading the keelbook engine (step 3 of 3)..." });
   await py.runPythonAsync(`
 import os, sys
 sys.path.insert(0, "/home/pyodide")
@@ -38,6 +39,8 @@ import micropip
 await micropip.install(${JSON.stringify(base + ENGINE_WHEEL)}, deps=False)
 import bridge
 `);
+  py.globals.set("js_progress", (text) => post({ type: "task", text }));
+  py.runPython("bridge.progress_hook = js_progress");
   call = py.globals.get("bridge").call;
   const status = JSON.parse(call("status", "{}"));
   post({ type: "ready", engine: status.ok.engine });
@@ -68,6 +71,7 @@ self.onmessage = async (event) => {
         return;
       }
     }
+    if (name === "scan") args2 = { ...args2, data_url: base + "data/" };
     delete args2.use_kev;
     const text = call(name, JSON.stringify(args2), blob || null);
     answer = JSON.parse(text);
