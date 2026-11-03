@@ -135,11 +135,13 @@ function productsTable(list, waiting) {
       <td class="num">${p.latest ? p.counts[DECIDED] : ""}</td>
       <td class="num">${!p.latest ? "" : p.exploited_checked ? (p.exploited ? `<span class="yes">${p.exploited}</span>` : 0) : '<span class="muted">not checked</span>'}</td>
       <td>${p.details.support_until ? esc(p.details.support_until) : '<span class="muted">not recorded</span>'}</td></tr>`).join("");
-  view.innerHTML = `<h1>Products</h1><p class="sub">Every product you place on the EU market and the state of its latest release.</p>` +
+  view.innerHTML = (list.length ? `<h1>Products</h1><p class="sub">Every product you place on the EU market and the state of its latest release.</p>`
+      : `<section class="hero"><p class="eyebrow">Keelbook</p><h1>Every vulnerability.<br>Every decision. On record.</h1>
+         <p class="lede">The vulnerability register the EU Cyber Resilience Act asks for, per product and release.</p></section>`) +
     (list.length ? `<div class="table-wrap"><table><thead><tr><th>Product</th><th>Latest release</th><th class="num">Findings</th><th class="num">Need a decision</th>
       <th class="num">Re-confirm</th><th class="num">Decided</th><th class="num">On CISA KEV</th><th>End of support</th></tr></thead><tbody>${rows}</tbody></table></div>`
-      : `<div class="notice">How it works:<ol class="steps"><li>Add a product below.</li><li>Upload the SBOM of a release: Keelbook finds known vulnerabilities in its components.</li>
-         <li>Decide each finding (affected, not affected, fixed) with a reason. Your name is recorded.</li><li>Download the evidence record and the VEX file for customers. Back up the register.</li></ol></div>`) +
+      : `<div class="how"><div><b>1</b><span>Add a product below.</span></div><div><b>2</b><span>Upload the SBOM of a release. Keelbook finds known vulnerabilities in its components.</span></div>
+         <div><b>3</b><span>Decide each finding (affected, not affected, fixed) with a reason. Your name is recorded.</span></div><div><b>4</b><span>Download the evidence record and the VEX file for customers. Back up the register.</span></div></div>`) +
     `<form id="add" class="box"><h2>Add a product</h2>
       <div class="fields">
         <label class="field"><span>Short ID</span><input name="pid" type="text" required placeholder="gateway-x"><small>Letters, digits and dashes. Used in file names.</small></label>
@@ -269,7 +271,7 @@ function drawRelease(pid, label, data) {
   const rows = shown.map((r) => `<tr>
       <td><input type="checkbox" name="pick" value="${esc(r.key)}" aria-label="Select"></td>
       <td class="ids"><b>${esc(r.cve_ids[0] || r.other_ids[0] || "")}</b>${[...r.cve_ids.slice(1), ...(r.cve_ids.length ? r.other_ids : r.other_ids.slice(1))].map((i) => `<span>${esc(i)}</span>`).join("")}</td>
-      <td class="${sevClass(r.severity_label)}">${esc(r.severity)}</td>
+      <td><span class="${sevClass(r.severity_label)}">${esc(r.severity)}</span></td>
       <td>${esc(r.component)}<div class="muted small">${esc(r.version)}</div></td>
       <td>${esc(r.fixed_in)}</td>
       <td>${!kevUsed ? '<span class="muted">not checked</span>' : r.kev === true ? '<span class="yes">Yes</span>' : r.kev === false ? "No" : '<span class="muted">unknown</span>'}</td>
@@ -304,7 +306,7 @@ function drawRelease(pid, label, data) {
     (compRows.length > 1 ? `<h2>By component</h2><div class="table-wrap"><table><thead><tr><th>Component</th><th>Version</th><th class="num">Findings</th>
       <th class="num">Without decision</th><th>Worst open</th><th class="num">On CISA KEV</th></tr></thead><tbody>${compRows.map((e) => `<tr>
       <td><a href="#" data-comp="${esc(e.name + " " + e.version)}">${esc(e.name)}</a></td><td>${esc(e.version)}</td><td class="num">${e.total}</td>
-      <td class="num">${e.open}</td><td class="${sevClass(e.open ? e.worst : "none")}">${e.open ? esc(e.worst) : "–"}</td>
+      <td class="num">${e.open}</td><td>${e.open ? `<span class="${sevClass(e.worst)}">${esc(e.worst)}</span>` : "–"}</td>
       <td class="num">${e.kev ? `<span class="yes">${e.kev}</span>` : kevUsed ? 0 : "–"}</td></tr>`).join("")}</tbody></table></div>` : "") +
     `<form id="decide" class="box"><h2>Decide <span id="picked">0</span> selected finding(s)</h2>
       <div class="check"><input id="allMatching" type="checkbox"><label for="allMatching">Apply to all <b>${matching.length}</b> finding(s) that match the filter below, not only the ticked ones</label></div>

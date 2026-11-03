@@ -3,7 +3,7 @@
 "use strict";
 
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/";
-const ENGINE_WHEEL = "vendor/keelbook-0.9.5-py3-none-any.whl";
+const ENGINE_WHEEL = "vendor/keelbook-1.0.0-py3-none-any.whl";
 importScripts(PYODIDE + "pyodide.js");
 
 let py = null;
