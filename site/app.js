@@ -122,9 +122,19 @@ async function productsPage() {
   if (!list) return;
   store("kb-products", JSON.stringify(list));
   productsTable(list, false);
+  const target = $({ new: "add", how: "how" }[route().page] || "-");
+  if (target) { target.scrollIntoView({ block: "start" }); if (target.id === "add") target.pid.focus({ preventScroll: true }); }
 }
 
 // waiting: shown from the copy saved at the last visit while the engine starts (links work once it is ready).
+const HERO_ART = `<svg viewBox="0 0 440 340" role="img" aria-label="SBOM, vulnerabilities and decisions meet in the register">
+  <circle cx="160" cy="135" r="105" fill="rgba(0,113,227,.10)" stroke="#0071e3" stroke-width="2"/>
+  <circle cx="280" cy="135" r="105" fill="rgba(29,29,31,.05)" stroke="#1d1d1f" stroke-width="2"/>
+  <circle cx="220" cy="225" r="105" fill="rgba(255,255,255,.55)" stroke="#86868b" stroke-width="2"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="16" font-weight="600" text-anchor="middle">
+  <text x="118" y="112" fill="#0071e3">SBOM</text><text x="322" y="112" fill="#1d1d1f">Vulnerabilities</text>
+  <text x="220" y="292" fill="#6e6e73">Decisions</text><text x="220" y="172" fill="#1d1d1f" font-size="18">Register</text></g></svg>`;
+
 function productsTable(list, waiting) {
   const rows = list.map((p) => `<tr>
       <td><a href="#product/${encodeURIComponent(p.id)}"><b>${esc(p.name)}</b></a><div class="muted small">${esc(p.id)}</div></td>
@@ -135,13 +145,18 @@ function productsTable(list, waiting) {
       <td class="num">${p.latest ? p.counts[DECIDED] : ""}</td>
       <td class="num">${!p.latest ? "" : p.exploited_checked ? (p.exploited ? `<span class="yes">${p.exploited}</span>` : 0) : '<span class="muted">not checked</span>'}</td>
       <td>${p.details.support_until ? esc(p.details.support_until) : '<span class="muted">not recorded</span>'}</td></tr>`).join("");
-  view.innerHTML = (list.length ? `<h1>Products</h1><p class="sub">Every product you place on the EU market and the state of its latest release.</p>`
-      : `<section class="hero"><p class="eyebrow">Keelbook</p><h1>Every vulnerability.<br>Every decision. On record.</h1>
-         <p class="lede">The vulnerability register the EU Cyber Resilience Act asks for, per product and release.</p></section>`) +
+  view.innerHTML = (list.length ? `<h1>Your <span class="hl">products</span></h1><p class="sub">Every product you place on the EU market and the state of its latest release.</p>`
+      : `<section class="hero"><div><h1>Every vulnerability.<br><span class="hl">Every decision.</span><br>On record.</h1>
+         <p class="lede">The vulnerability register the EU Cyber Resilience Act asks for, per product and release. Free, in your browser.</p>
+         <div class="row"><a class="btn primary big" href="#new">Add your first product</a><a class="btn big" href="#how">How it works</a></div></div>
+         ${HERO_ART}</section>`) +
     (list.length ? `<div class="table-wrap"><table><thead><tr><th>Product</th><th>Latest release</th><th class="num">Findings</th><th class="num">Need a decision</th>
       <th class="num">Re-confirm</th><th class="num">Decided</th><th class="num">On CISA KEV</th><th>End of support</th></tr></thead><tbody>${rows}</tbody></table></div>`
-      : `<div class="how"><div><b>1</b><span>Add a product below.</span></div><div><b>2</b><span>Upload the SBOM of a release. Keelbook finds known vulnerabilities in its components.</span></div>
-         <div><b>3</b><span>Decide each finding (affected, not affected, fixed) with a reason. Your name is recorded.</span></div><div><b>4</b><span>Download the evidence record and the VEX file for customers. Back up the register.</span></div></div>`) +
+      : `<h2 id="how">How it <span class="hl">works</span></h2><div class="how">
+         <div><b>1</b><h3>Add a product</h3><span>Name, contact for vulnerabilities and end of support.</span></div>
+         <div><b>2</b><h3>Scan a release</h3><span>Upload its SBOM. Keelbook finds the known vulnerabilities in its components.</span></div>
+         <div><b>3</b><h3>Decide</h3><span>Affected, not affected or fixed, with a reason. Your name is recorded.</span></div>
+         <div><b>4</b><h3>Prove it</h3><span>Download the evidence record and the VEX file for customers. Back up the register.</span></div></div>`) +
     `<form id="add" class="box"><h2>Add a product</h2>
       <div class="fields">
         <label class="field"><span>Short ID</span><input name="pid" type="text" required placeholder="gateway-x"><small>Letters, digits and dashes. Used in file names.</small></label>
@@ -281,7 +296,7 @@ function drawRelease(pid, label, data) {
       <td class="summary-cell">${esc(r.summary)}</td></tr>`).join("");
 
   view.innerHTML = `<div class="crumbs"><a href="#">Products</a> / <a href="#product/${encodeURIComponent(pid)}">${esc(data.product.name)}</a> / ${esc(rel.label)}</div>
-    <h1>${esc(data.product.name)} ${esc(rel.label)}</h1>
+    <h1>${esc(data.product.name)} <span class="hl">${esc(rel.label)}</span></h1>
     <p class="sub">${esc(rel.sbom_file)} · scanned ${esc(when(rel.scanned_at))} UTC by ${esc(rel.scanned_by)} · sources: ${esc(rel.sources.join(", ") || "none")}</p>
     <div class="stats">
       <div><b>${data.rows.length}</b><span>findings</span></div>
@@ -289,7 +304,7 @@ function drawRelease(pid, label, data) {
       <div><b class="${c[RECONFIRM] ? "st-re" : ""}">${c[RECONFIRM]}</b><span>re-confirm (version changed)</span></div>
       <div><b>${c[DECIDED]}</b><span>decided</span></div>
       <div><b class="${exploited ? "yes" : ""}">${kevUsed ? exploited : "–"}</b><span>${kevUsed ? "on CISA KEV" : "CISA KEV not checked"}</span></div>
-      <div><b>${rel.checked} / ${rel.total}</b><span>components checked</span></div>
+      <div><b>${rel.checked}</b><span>of ${rel.total} components checked</span></div>
     </div>
     ${notChecked ? `<div class="notice warn">Not checked: ${esc(notChecked)}. These components are not counted as clean.</div>` : ""}
     ${exploited ? `<div class="notice error">${exploited} finding(s) are on CISA's exploited list. If one is really exploited in your product, the CRA Art. 14 deadlines (24 h / 72 h) may apply. A person confirms and decides.</div>` : ""}
