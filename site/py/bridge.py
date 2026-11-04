@@ -202,7 +202,7 @@ def _open(create: bool = False) -> tuple[Store, Register]:
 def _need_name(actor: str) -> str:
     actor = " ".join((actor or "").split())
     if not actor:
-        raise ValueError("Enter your name first (top of the page): every entry is recorded with it.")
+        raise ValueError("A name is needed to record this entry (every entry is recorded with who made it).")
     return actor
 
 

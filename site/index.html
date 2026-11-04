@@ -44,10 +44,7 @@ h3 { font-size: 19px; font-weight: 600; margin: 0 0 6px; }
 .strip .in { max-width: 1200px; margin: 0 auto; padding: 0 24px; min-height: 38px; display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
 .strip .in > span:first-child { color: #a1a1a6; }
 .strip .right { margin-left: auto; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
-.strip label { display: flex; gap: 8px; align-items: center; }
-.strip input[type=text] { width: 190px; height: 26px; border-radius: var(--pill); border: 1px solid #48484a; background: #2c2c2e; color: #f5f5f7; padding: 0 12px; font-size: 12px; }
-.strip input::placeholder { color: #8e8e93; }
-.strip input[type=text]:focus { outline: none; border-color: var(--blue); }
+.strip .demo { display: inline-block; margin-right: 8px; padding: 1px 9px; border-radius: var(--pill); background: var(--blue); color: #fff; font-weight: 600; }
 .strip a { color: #f5f5f7; }
 #engine::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #8e8e93; margin-right: 7px; vertical-align: 1px; }
 #engine.ready::before { background: #30d158; }
@@ -163,7 +160,20 @@ tbody tr:hover td { background: #fafafc; }
 @keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
 @media (prefers-reduced-motion: reduce) { .progress .bar2 i { animation: none; width: 100%; opacity: .4; } html { scroll-behavior: auto; } }
 ol.steps { margin: 8px 0 0; padding-left: 22px; }
-#add, #how { scroll-margin-top: 96px; }
+
+/* Contact: a PANEL with the message on the left and three points on the right */
+.contact { background: var(--gray); border-radius: var(--panel); padding: 56px 56px; margin: 56px 0 24px; display: grid;
+  grid-template-columns: 1.2fr .8fr; gap: 48px; align-items: center; }
+.contact h2 { margin: 0 0 14px; font-size: 40px; line-height: 1.1; letter-spacing: -.03em; }
+.contact h2::before { content: ""; display: block; width: 56px; height: 4px; border-radius: 2px; background: var(--blue); margin: 0 0 24px; }
+.contact p { color: var(--ink); font-size: 17px; margin: 0 0 28px; }
+.contact ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.contact li { background: var(--bg); border-radius: var(--card); padding: 20px 22px; }
+.contact li b { display: block; font-size: 17px; margin-bottom: 2px; }
+.contact li span { color: var(--muted); font-size: 15px; }
+.btn.off { border-color: var(--line); background: var(--bg); color: var(--muted); cursor: default; }
+.btn.primary.off:hover { background: var(--bg); }
+#add, #how, #contact { scroll-margin-top: 96px; }
 
 /* Footer: light gray, columns, small type */
 footer { background: var(--gray); color: var(--muted); font-size: 12px; line-height: 1.6; margin-top: 40px; }
@@ -178,28 +188,29 @@ footer .base { padding-top: 16px; display: flex; gap: 20px; flex-wrap: wrap; }
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; padding: 48px 32px; } .hero svg { max-width: 320px; }
   .how { grid-template-columns: 1fr 1fr; } footer .cols { grid-template-columns: 1fr 1fr; }
+  .contact { grid-template-columns: 1fr; padding: 44px 32px; }
 }
 @media (max-width: 640px) {
   body { font-size: 16px; } h1 { font-size: 34px; } .hero h1 { font-size: 36px; } .hero p.lede, .sub { font-size: 17px; }
   h2 { font-size: 24px; margin-top: 40px; } main { padding: 28px 16px 64px; }
   .hero { padding: 40px 24px; border-radius: 22px; } .box { padding: 28px 22px; border-radius: 22px; }
-  .how { grid-template-columns: 1fr; } .nav { position: static; } .nav .in { gap: 14px 24px; padding: 12px 16px; }
+  .how { grid-template-columns: 1fr; } .nav { position: static; } .contact { padding: 32px 22px; border-radius: 22px; } .contact h2 { font-size: 30px; } .nav .in { gap: 14px 24px; padding: 12px 16px; }
   .nav nav { gap: 20px; } .nav .cta { margin-left: 0; } .strip .in { padding: 6px 16px; } .strip .right { margin-left: 0; }
-  .strip input[type=text] { width: 150px; } .stats div b { font-size: 30px; } footer .cols { grid-template-columns: 1fr; }
+ .stats div b { font-size: 30px; } footer .cols { grid-template-columns: 1fr; }
 }
 </style>
 </head>
 <body>
 <div class="strip"><div class="in">
-  <span>Your SBOM and your register stay on this computer.</span>
+  <span><b class="demo">Demo</b> No login: entries are recorded as “Demo user”. Your SBOM and your register stay on this computer.</span>
   <div class="right">
-    <label for="actor">Your name <input id="actor" type="text" autocomplete="name" placeholder="recorded with every entry"></label>
+    <a href="#contact" class="teams">Keelbook for teams</a>
     <span id="engine">Starting...</span>
   </div>
 </div></div>
 <header class="nav"><div class="in">
   <a class="brand" href="#"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0071e3"/><path d="M7 21h18l-3.2 4.5H10.2z M15 6.5v13 M15 8l7.5 11H15z" fill="#fff" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>Keelbook</a>
-  <nav><a href="#">Products</a><a href="#data">Backup and restore</a></nav>
+  <nav><a href="#">Products</a><a href="#data">Backup and restore</a><a href="#contact" class="contact-link">Contact</a></nav>
   <a class="btn primary small cta" href="#new">Add a product</a>
 </div></header>
 <main>
@@ -219,7 +230,7 @@ footer .base { padding-top: 16px; display: flex; gap: 20px; flex-wrap: wrap; }
       only the names and versions of the components (for example "openssl 3.4.2") to public vulnerability databases (OSV, and NVD if you
       tick it), the same way you would search for them yourself. Keelbook never reports anything to ENISA, the EU cybersecurity agency:
       if the CRA requires a report, you send it yourself.</span></div>
-    <div><h4>Keelbook</h4><a href="#">Products</a><a href="#new">Add a product</a><a href="#data">Backup and restore</a></div>
+    <div><h4>Keelbook</h4><a href="#">Products</a><a href="#new">Add a product</a><a href="#data">Backup and restore</a><a href="#contact" class="contact-link">Contact us</a></div>
     <div><h4>The CRA</h4><a href="https://eur-lex.europa.eu/eli/reg/2024/2847/oj">Regulation (EU) 2024/2847</a>
       <a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog">CISA exploited list</a><a href="https://osv.dev/">OSV database</a></div>
   </div>

@@ -8,13 +8,19 @@ const JUSTIFICATIONS = [["component_not_present", "Component not present"], ["vu
 const NEEDS = "needs decision", RECONFIRM = "re-confirm", DECIDED = "decided";
 
 const $ = (id) => document.getElementById(id);
-const view = $("view"), msg = $("msg"), actorInput = $("actor"), engineText = $("engine");
+const view = $("view"), msg = $("msg"), engineText = $("engine");
+// The free website is a demo: there is no login, so every entry is recorded as DEMO_USER.
+// Named decisions with real accounts (password login, roles) are in the Keelbook server version.
+const DEMO_USER = "Demo user";
+const SERVER_MODE = () => !!window.KEELBOOK_SERVER;
+// Contact address for the "Contact us" section. Empty = not published yet (the button says so).
+const CONTACT_EMAIL = "";
 
 // ---------- helpers ----------
 function esc(t) { return String(t == null ? "" : t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function store(key, value) { try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch (e) { return null; } }
 function say(text, kind) { msg.textContent = text || ""; msg.className = "notice" + (kind ? " " + kind : ""); if (text) window.scrollTo({ top: 0, behavior: "smooth" }); }
-function actor() { return actorInput.value.trim(); }
+function actor() { return DEMO_USER; }
 function when(iso) { return iso ? iso.slice(0, 16).replace("T", " ") : ""; }
 function download(name, content, type) {
   const blob = content instanceof Blob ? content : new Blob([content], { type });
@@ -112,8 +118,7 @@ async function render() {
   if (flash) { say(flash[0], flash[1]); flash = null; }
 }
 window.addEventListener("hashchange", () => { say(""); render(); });
-actorInput.value = store("kb-name") || "";
-actorInput.addEventListener("change", () => store("kb-name", actor()));
+document.querySelectorAll("[data-contact]").forEach(contactButton);
 function go(hash) { if (location.hash.slice(1) === hash) render(); else location.hash = hash; }
 
 // ---------- products ----------
@@ -122,11 +127,27 @@ async function productsPage() {
   if (!list) return;
   store("kb-products", JSON.stringify(list));
   productsTable(list, false);
-  const target = $({ new: "add", how: "how" }[route().page] || "-");
+  const target = $({ new: "add", how: "how", contact: "contact" }[route().page] || "-");
   if (target) { target.scrollIntoView({ block: "start" }); if (target.id === "add") target.pid.focus({ preventScroll: true }); }
 }
 
 // waiting: shown from the copy saved at the last visit while the engine starts (links work once it is ready).
+function contactButton(el) {
+  if (CONTACT_EMAIL) { el.href = "mailto:" + CONTACT_EMAIL + "?subject=" + encodeURIComponent("Keelbook"); el.classList.remove("off"); }
+  else { el.removeAttribute("href"); el.classList.add("off"); el.textContent = "Contact address coming soon"; }
+}
+function contactSection() {
+  return `<section class="contact" id="contact"><div>
+      <h2>Using Keelbook for <span class="hl">real products?</span></h2>
+      <p>This website is a demo: it has no login, so every decision is recorded as “${DEMO_USER}”. The Keelbook server gives
+      your team real accounts and passwords, decisions recorded with each person's name, nightly re-checks of every release and
+      email alerts. Tell us about your products and we will set it up with you.</p>
+      <div class="row"><a class="btn primary big" data-contact>Contact us</a></div></div>
+      <ul><li><b>Named decisions</b><span>Each person logs in; every entry carries their name and email.</span></li>
+      <li><b>Checked every night</b><span>New vulnerabilities in shipped releases, by email.</span></li>
+      <li><b>Your server or ours</b><span>Runs in your company, or hosted in the EU.</span></li></ul></section>`;
+}
+
 const HERO_ART = `<svg viewBox="0 0 440 340" role="img" aria-label="SBOM, vulnerabilities and decisions meet in the register">
   <circle cx="160" cy="135" r="105" fill="rgba(0,113,227,.10)" stroke="#0071e3" stroke-width="2"/>
   <circle cx="280" cy="135" r="105" fill="rgba(29,29,31,.05)" stroke="#1d1d1f" stroke-width="2"/>
@@ -155,7 +176,7 @@ function productsTable(list, waiting) {
       : `<h2 id="how">How it <span class="hl">works</span></h2><div class="how">
          <div><b>1</b><h3>Add a product</h3><span>Name, contact for vulnerabilities and end of support.</span></div>
          <div><b>2</b><h3>Scan a release</h3><span>Upload its SBOM. Keelbook finds the known vulnerabilities in its components.</span></div>
-         <div><b>3</b><h3>Decide</h3><span>Affected, not affected or fixed, with a reason. Your name is recorded.</span></div>
+         <div><b>3</b><h3>Decide</h3><span>Affected, not affected or fixed, with a reason. Each one is kept in the log.</span></div>
          <div><b>4</b><h3>Prove it</h3><span>Download the evidence record and the VEX file for customers. Back up the register.</span></div></div>`) +
     `<form id="add" class="box"><h2>Add a product</h2>
       <div class="fields">
@@ -163,7 +184,9 @@ function productsTable(list, waiting) {
         <label class="field"><span>Name</span><input name="name" type="text" placeholder="Gateway X200"></label>
         ${detailFields({})}
       </div>
-      <button class="btn primary" type="submit"${waiting ? " disabled" : ""}>${waiting ? "Starting..." : "Add product"}</button></form>`;
+      <button class="btn primary" type="submit"${waiting ? " disabled" : ""}>${waiting ? "Starting..." : "Add product"}</button></form>` +
+    (SERVER_MODE() ? "" : contactSection());
+  view.querySelectorAll("[data-contact]").forEach(contactButton);
   if (waiting) return;
   $("add").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -199,7 +222,7 @@ async function productPage(pid) {
       Disclosure policy: ${d.cvd_policy ? esc(d.cvd_policy) : missing} · End of support: ${d.support_until ? esc(d.support_until) : missing} ·
       <a href="#" id="editToggle">Edit</a></p>
     <form id="edit" class="box" hidden><h2>Product details</h2><div class="fields">${detailFields(d)}</div>
-      <button class="btn primary" type="submit">Save details</button> <span class="muted small">Changes are recorded with your name; earlier values stay in the log.</span></form>
+      <button class="btn primary" type="submit">Save details</button> <span class="muted small">Changes are recorded in the log; earlier values stay there too.</span></form>
     <form id="scan" class="box"><h2>Scan the SBOM of a release</h2>
       <div class="fields">
         <label class="field"><span>Release</span><input name="label" type="text" required placeholder="2.1.0"></label>
