@@ -13,8 +13,7 @@ const view = $("view"), msg = $("msg"), engineText = $("engine");
 // Named decisions with real accounts (password login, roles) are in the Keelbook server version.
 const DEMO_USER = "Demo user";
 const SERVER_MODE = () => !!window.KEELBOOK_SERVER;
-// Contact address for the "Contact us" section. Empty = not published yet (the button says so).
-const CONTACT_EMAIL = "";
+const onDemo = () => !MARKETING_PAGES.includes(route().page) || SERVER_MODE();
 
 // ---------- helpers ----------
 function esc(t) { return String(t == null ? "" : t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -51,8 +50,8 @@ function startWorker() {
   worker = new Worker("worker.js");
   worker.onmessage = (event) => {
     const m = event.data;
-    if (m.type === "progress") { engineText.textContent = m.text; engineText.className = ""; if (!ready) render(); }
-    else if (m.type === "ready") { ready = true; engineText.textContent = "Ready (engine " + m.engine + ")"; engineText.className = "ready"; render(); }
+    if (m.type === "progress") { engineText.textContent = m.text; engineText.className = ""; if (!ready && onDemo()) render(); }
+    else if (m.type === "ready") { ready = true; engineText.textContent = "Ready (engine " + m.engine + ")"; engineText.className = "ready"; if (onDemo()) render(); }
     else if (m.type === "fatal") { engineText.textContent = "Engine failed to start"; say("The engine could not start: " + m.text + "\nCheck the internet connection and reload the page.", "error"); }
     else if (m.type === "task") $("task").textContent = m.text;
     else if (m.type === "log") console.log(m.line);
@@ -99,13 +98,19 @@ async function run(button, text, name, args, blob, stoppable) {
 // ---------- routing ----------
 function route() {
   const parts = decodeURIComponent(location.hash.slice(1)).split("/");
-  return { page: parts[0] || "products", id: parts[1], label: parts.slice(2).join("/") };
+  return { page: parts[0] || (SERVER_MODE() ? "demo" : "home"), id: parts[1], label: parts.slice(2).join("/") };
 }
 let flash = null;
 async function render() {
+  const page = route().page;
+  const marketing = !SERVER_MODE() && MARKETING_PAGES.includes(page);
+  document.body.classList.toggle("is-demo", !marketing);
+  document.querySelectorAll(".nav nav a").forEach((a) => a.classList.toggle("active",
+    a.getAttribute("href") === "#" + (marketing ? page : "demo")));
+  if (marketing) { renderMarketing(page, view); return; }
   if (!ready) {
     const cached = (() => { try { return JSON.parse(store("kb-products") || "null"); } catch (e) { return null; } })();
-    if (cached && cached.length && route().page === "products") { productsTable(cached, true); return; }
+    if (cached && cached.length && ["demo", "new"].includes(route().page)) { productsTable(cached, true); return; }
     view.innerHTML = `<h1>Loading Keelbook</h1><p class="muted">The first visit downloads about 15 MB and takes up to a minute. Later visits start in a few seconds.</p>
       <p>${esc(engineText.textContent)}</p>`;
     return;
@@ -118,7 +123,6 @@ async function render() {
   if (flash) { say(flash[0], flash[1]); flash = null; }
 }
 window.addEventListener("hashchange", () => { say(""); render(); });
-document.querySelectorAll("[data-contact]").forEach(contactButton);
 function go(hash) { if (location.hash.slice(1) === hash) render(); else location.hash = hash; }
 
 // ---------- products ----------
@@ -127,35 +131,11 @@ async function productsPage() {
   if (!list) return;
   store("kb-products", JSON.stringify(list));
   productsTable(list, false);
-  const target = $({ new: "add", how: "how", contact: "contact" }[route().page] || "-");
+  const target = $({ new: "add" }[route().page] || "-");
   if (target) { target.scrollIntoView({ block: "start" }); if (target.id === "add") target.pid.focus({ preventScroll: true }); }
 }
 
 // waiting: shown from the copy saved at the last visit while the engine starts (links work once it is ready).
-function contactButton(el) {
-  if (CONTACT_EMAIL) { el.href = "mailto:" + CONTACT_EMAIL + "?subject=" + encodeURIComponent("Keelbook"); el.classList.remove("off"); }
-  else { el.removeAttribute("href"); el.classList.add("off"); el.textContent = "Contact address coming soon"; }
-}
-function contactSection() {
-  return `<section class="contact" id="contact"><div>
-      <h2>Using Keelbook for <span class="hl">real products?</span></h2>
-      <p>This website is a demo: it has no login, so every decision is recorded as “${DEMO_USER}”. The Keelbook server gives
-      your team real accounts and passwords, decisions recorded with each person's name, nightly re-checks of every release and
-      email alerts. Tell us about your products and we will set it up with you.</p>
-      <div class="row"><a class="btn primary big" data-contact>Contact us</a></div></div>
-      <ul><li><b>Named decisions</b><span>Each person logs in; every entry carries their name and email.</span></li>
-      <li><b>Checked every night</b><span>New vulnerabilities in shipped releases, by email.</span></li>
-      <li><b>Your server or ours</b><span>Runs in your company, or hosted in the EU.</span></li></ul></section>`;
-}
-
-const HERO_ART = `<svg viewBox="0 0 440 340" role="img" aria-label="SBOM, vulnerabilities and decisions meet in the register">
-  <circle cx="160" cy="135" r="105" fill="rgba(0,113,227,.10)" stroke="#0071e3" stroke-width="2"/>
-  <circle cx="280" cy="135" r="105" fill="rgba(29,29,31,.05)" stroke="#1d1d1f" stroke-width="2"/>
-  <circle cx="220" cy="225" r="105" fill="rgba(255,255,255,.55)" stroke="#86868b" stroke-width="2"/>
-  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="16" font-weight="600" text-anchor="middle">
-  <text x="118" y="112" fill="#0071e3">SBOM</text><text x="322" y="112" fill="#1d1d1f">Vulnerabilities</text>
-  <text x="220" y="292" fill="#6e6e73">Decisions</text><text x="220" y="172" fill="#1d1d1f" font-size="18">Register</text></g></svg>`;
-
 function productsTable(list, waiting) {
   const rows = list.map((p) => `<tr>
       <td><a href="#product/${encodeURIComponent(p.id)}"><b>${esc(p.name)}</b></a><div class="muted small">${esc(p.id)}</div></td>
@@ -167,13 +147,11 @@ function productsTable(list, waiting) {
       <td class="num">${!p.latest ? "" : p.exploited_checked ? (p.exploited ? `<span class="yes">${p.exploited}</span>` : 0) : '<span class="muted">not checked</span>'}</td>
       <td>${p.details.support_until ? esc(p.details.support_until) : '<span class="muted">not recorded</span>'}</td></tr>`).join("");
   view.innerHTML = (list.length ? `<h1>Your <span class="hl">products</span></h1><p class="sub">Every product you place on the EU market and the state of its latest release.</p>`
-      : `<section class="hero"><div><h1>Every vulnerability.<br><span class="hl">Every decision.</span><br>On record.</h1>
-         <p class="lede">The vulnerability register the EU Cyber Resilience Act asks for, per product and release. Free, in your browser.</p>
-         <div class="row"><a class="btn primary big" href="#new">Add your first product</a><a class="btn big" href="#how">How it works</a></div></div>
-         ${HERO_ART}</section>`) +
+      : `<h1>Try <span class="hl">Keelbook.</span></h1><p class="sub">This is the real tool, running in your browser. Add a product,
+         scan the SBOM of a release and decide its findings. Nothing is uploaded; entries are recorded as “${DEMO_USER}”.</p>`) +
     (list.length ? `<div class="table-wrap"><table><thead><tr><th>Product</th><th>Latest release</th><th class="num">Findings</th><th class="num">Need a decision</th>
       <th class="num">Re-confirm</th><th class="num">Decided</th><th class="num">On CISA KEV</th><th>End of support</th></tr></thead><tbody>${rows}</tbody></table></div>`
-      : `<h2 id="how">How it <span class="hl">works</span></h2><div class="how">
+      : `<div class="how">
          <div><b>1</b><h3>Add a product</h3><span>Name, contact for vulnerabilities and end of support.</span></div>
          <div><b>2</b><h3>Scan a release</h3><span>Upload its SBOM. Keelbook finds the known vulnerabilities in its components.</span></div>
          <div><b>3</b><h3>Decide</h3><span>Affected, not affected or fixed, with a reason. Each one is kept in the log.</span></div>
@@ -185,8 +163,8 @@ function productsTable(list, waiting) {
         ${detailFields({})}
       </div>
       <button class="btn primary" type="submit"${waiting ? " disabled" : ""}>${waiting ? "Starting..." : "Add product"}</button></form>` +
-    (SERVER_MODE() ? "" : contactSection());
-  view.querySelectorAll("[data-contact]").forEach(contactButton);
+    (SERVER_MODE() ? "" : `<div class="notice">Using Keelbook for real products? The server version records every decision under each
+      person's name, with logins and nightly re-checks. <a href="#contact">Contact us</a></div>`);
   if (waiting) return;
   $("add").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -217,7 +195,7 @@ async function productPage(pid) {
       <td class="num">${r.findings}</td><td class="num">${r.counts[NEEDS]}</td><td class="num">${r.counts[RECONFIRM]}</td><td class="num">${r.counts[DECIDED]}</td>
       <td class="num">${r.exploited ? `<span class="yes">${r.exploited}</span>` : 0}</td></tr>`).join("");
   const missing = '<span class="muted">not recorded</span>';
-  view.innerHTML = `<div class="crumbs"><a href="#">Products</a> / ${esc(p.id)}</div><h1>${esc(p.name)}</h1>
+  view.innerHTML = `<div class="crumbs"><a href="#demo">Products</a> / ${esc(p.id)}</div><h1>${esc(p.name)}</h1>
     <p class="sub">Manufacturer: ${d.manufacturer ? esc(d.manufacturer) : missing} · Contact: ${d.contact ? esc(d.contact) : missing} ·
       Disclosure policy: ${d.cvd_policy ? esc(d.cvd_policy) : missing} · End of support: ${d.support_until ? esc(d.support_until) : missing} ·
       <a href="#" id="editToggle">Edit</a></p>
@@ -318,7 +296,7 @@ function drawRelease(pid, label, data) {
           ${r.producer ? `<div class="muted small">Producer: ${esc(r.producer)}</div>` : ""}</td>
       <td class="summary-cell">${esc(r.summary)}</td></tr>`).join("");
 
-  view.innerHTML = `<div class="crumbs"><a href="#">Products</a> / <a href="#product/${encodeURIComponent(pid)}">${esc(data.product.name)}</a> / ${esc(rel.label)}</div>
+  view.innerHTML = `<div class="crumbs"><a href="#demo">Products</a> / <a href="#product/${encodeURIComponent(pid)}">${esc(data.product.name)}</a> / ${esc(rel.label)}</div>
     <h1>${esc(data.product.name)} <span class="hl">${esc(rel.label)}</span></h1>
     <p class="sub">${esc(rel.sbom_file)} · scanned ${esc(when(rel.scanned_at))} UTC by ${esc(rel.scanned_by)} · sources: ${esc(rel.sources.join(", ") || "none")}</p>
     <div class="stats">
@@ -429,7 +407,7 @@ function drawRelease(pid, label, data) {
 async function dataPage() {
   const v = await run(null, "Checking the log...", "verify");
   if (!v) return;
-  view.innerHTML = `<div class="crumbs"><a href="#">Products</a> / Backup and restore</div><h1>Backup and restore</h1>
+  view.innerHTML = `<div class="crumbs"><a href="#demo">Products</a> / Backup and restore</div><h1>Backup and restore</h1>
     <p class="sub">The register is kept in this browser. Clearing the browser's site data deletes it, and Safari may delete it after 7 days without a visit. Download a backup after each session.</p>
     <div class="box"><h2>Log</h2>
       <p>${v.count ? (v.ok ? `<span class="st-done">Verified</span>: ${v.count} entries, none changed or removed.` : `<span class="st-open">FAILED</span>: ${esc(v.problem)}`) : "Empty: nothing recorded yet."}</p>
