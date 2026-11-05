@@ -1,7 +1,7 @@
 "use strict";
 // Marketing pages (Home, Products, How it works, About us, Contact) and their animations.
 // The Demo pages (the real tool) are in app.js and have no animations.
-// Motion follows apple.com: 0.2-0.6 s, small distances, fade + rise + slight blur, items one after another,
+// Motion follows apple.com: 0.2-0.6 s, small distances, fade + rise (no blur), items one after another,
 // one easing; nothing moves for people who chose "reduce motion" in their system.
 
 // Contact address for the Contact page. Empty = not published yet (the button says so).
